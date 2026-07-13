@@ -107,6 +107,8 @@ This ensures the model is evaluated on completely unseen engines rather than uns
 
 RandomizedSearchCV was used to optimize tree-based models while maintaining group-aware validation, scored directly against the NASA score (see below) rather than plain MAE, so hyperparameter selection is aligned with the project's asymmetric business cost.
 
+Tuning improved XGBoost across every metric but did not improve Random Forest on this dataset (see Results below) — both outcomes are reported rather than only the favorable one.
+
 ### 6. Explainability
 
 Model interpretability was investigated using:
@@ -136,10 +138,23 @@ Because the exponential penalty grows faster for overestimation than underestima
 
 | Model         |       MAE |      RMSE |        R² | NASA Score |
 | ------------- | --------: | --------: | --------: | ---------: |
-| Random Forest |     21.60 |     29.18 |     0.714 |       6568 |
-| XGBoost       | **21.23** | **28.65** | **0.724** |   **5734** |
+| Random Forest (tuned) |     22.30 |     29.78 |     0.702 |       7026 |
+| XGBoost (tuned)       | **21.01** | **28.41** | **0.729** |   **5553** |
 
 The tuned XGBoost model achieved the best performance across all evaluation metrics and was selected as the final deployment candidate.
+
+### Tuned vs. Untuned: an honest comparison
+
+Hyperparameter tuning was evaluated against the original default-parameter models on the same holdout set:
+
+| Model | | MAE | RMSE | R² | NASA |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Random Forest | Untuned | 21.60 | 29.18 | 0.714 | 6568 |
+| | **Tuned** | 22.30 | 29.78 | 0.702 | 7026 |
+| XGBoost | Untuned | 21.23 | 28.65 | 0.724 | 5734 |
+| | **Tuned** | **21.01** | **28.41** | **0.729** | **5553** |
+
+Tuning **improved XGBoost across every metric** (the model actually deployed) but **did not improve Random Forest** with the search grid used here — RF's default settings already performed near-optimally, and the constrained grid (kept small deliberately for tractable runtime) may not have covered the region where further RF gains exist. Since Random Forest is not the deployed model, this doesn't affect production performance, but it's reported here rather than omitted, since a fair evaluation should show where tuning didn't help as well as where it did.
 
 ### Results Interpretation
 
@@ -149,13 +164,13 @@ An MAE of ~21 cycles means predictions are, on average, within about 21 operatin
 
 ## Final Model
 
-XGBoost Regressor
+XGBoost Regressor (tuned via GroupKFold-validated `RandomizedSearchCV`, scored against the NASA score)
 
 Hyperparameters:
 
-* n_estimators = 300
-* max_depth = 8
-* learning_rate = 0.05
+* n_estimators = 500
+* max_depth = 6
+* learning_rate = 0.03
 * subsample = 0.8
 * colsample_bytree = 1.0
 * min_child_weight = 5
@@ -166,6 +181,7 @@ Hyperparameters:
 
 * Sensor values are not currently normalized per operating regime. Because FD004 mixes six distinct operating regimes, the same raw sensor reading can mean different things depending on the regime the engine is in at that cycle — per-regime normalization is a well-established improvement for FD002/FD004-style datasets and is a likely source of residual error, especially for long-horizon (high true-RUL) predictions where degradation signal is weakest.
 * Only two sensors (`sensor_11`, `sensor_14`) are used for rolling/lag/delta feature engineering; correlation analysis in the EDA step suggests other sensors (e.g. `sensor_20`) carry additional signal not yet incorporated.
+* The hyperparameter search grid was deliberately kept small to keep runtime tractable on local hardware; this improved the deployed XGBoost model but did not improve Random Forest, and a larger grid or Bayesian search could plausibly do better for both.
 * The model is evaluated using only the final cycle of each test engine, matching the official NASA FD004 test protocol — real-time, mid-life RUL estimates for engines were not separately validated against ground truth at intermediate cycles.
 * Classical tree-based models are used rather than sequence models (LSTM/GRU/Transformer); these are called out under Future Work as a likely source of further improvement, since they can use the full sensor trajectory rather than a fixed set of lag features.
 
@@ -219,6 +235,7 @@ Potential improvements include:
 
 * Per-regime sensor normalization
 * Expanding rolling/lag/delta feature engineering beyond `sensor_11`/`sensor_14` to other correlated sensors
+* A larger or Bayesian hyperparameter search, particularly for Random Forest, where the current grid showed no improvement over defaults
 * LSTM-based sequence models
 * GRU architectures
 * Transformer-based prognostics models
