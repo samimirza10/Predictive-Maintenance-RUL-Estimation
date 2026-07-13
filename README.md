@@ -27,7 +27,7 @@ Predicting RUL provides significantly more value than binary fault prediction be
 * Safety risks
 * Expensive emergency maintenance
 
-In safety-critical industries such as aviation, overestimation errors are significantly more costly than underestimation errors.
+In safety-critical industries such as aviation, overestimation errors are significantly more costly than underestimation errors. This is reflected in the custom **NASA scoring function** used for evaluation (see below), which penalizes overestimation more heavily than underestimation.
 
 ---
 
@@ -48,6 +48,22 @@ Characteristics:
 * Variable degradation trajectories
 
 FD004 is widely regarded as the most challenging subset due to regime switching and complex degradation behavior.
+
+**Citation:** A. Saxena, K. Goebel, D. Simon, and N. Eklund, "Damage Propagation Modeling for Aircraft Engine Run-to-Failure Simulation," in *Proceedings of the International Conference on Prognostics and Health Management (PHM08)*, Denver, CO, 2008. Dataset available via the [NASA Prognostics Center of Excellence Data Repository](https://www.nasa.gov/intelligent-systems-division/discovery-and-systems-health/pcoe/pcoe-data-set-repository/).
+
+---
+
+## Setup & Reproduction
+
+```bash
+git clone <repo-url>
+cd remaining-useful-life-prediction
+python -m venv venv
+source venv/bin/activate   # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+Place the raw CMAPSS files (`train_FD004.txt`, `test_FD004.txt`, `RUL_FD004.txt`) in `data/`, then run the notebook(s) in `notebooks/` top to bottom. Random seeds are fixed (`SEED = 42`) for `numpy`, `random`, and all scikit-learn / XGBoost estimators to keep results reproducible across runs. Package versions are pinned in `requirements.txt`; tree-based model outputs can shift slightly across scikit-learn/XGBoost versions even with the same seed, so matching those versions matters for exact reproduction.
 
 ---
 
@@ -70,6 +86,8 @@ FD004 is widely regarded as the most challenging subset due to regime switching 
 * Temporal delta features
 * Operating regime clustering using KMeans
 
+Rolling/lag/delta features are computed per-engine (grouped by `engine_id`) so no information crosses between different engines' trajectories.
+
 ### 3. Validation Strategy
 
 To prevent temporal leakage, GroupKFold cross-validation was performed using engine IDs as grouping variables.
@@ -87,7 +105,7 @@ This ensures the model is evaluated on completely unseen engines rather than uns
 
 ### 5. Hyperparameter Optimization
 
-RandomizedSearchCV was used to optimize tree-based models while maintaining group-aware validation.
+RandomizedSearchCV was used to optimize tree-based models while maintaining group-aware validation, scored directly against the NASA score (see below) rather than plain MAE, so hyperparameter selection is aligned with the project's asymmetric business cost.
 
 ### 6. Explainability
 
@@ -96,6 +114,21 @@ Model interpretability was investigated using:
 * Feature Importance
 * Permutation Importance
 * SHAP Values
+
+All interpretability results are generated from the final, deployed model (trained on the full feature set including operating-regime clusters) so the plots below accurately reflect what's shipped.
+
+---
+
+## Evaluation Metric: NASA Score
+
+Alongside standard regression metrics (MAE, RMSE, R²), this project reports the official **NASA scoring function** used in CMAPSS prognostics literature:
+
+* For each prediction error `d = predicted_RUL - true_RUL`:
+  * If `d < 0` (underestimate — predicting failure earlier than it actually occurs): `score = exp(-d / 13) - 1`
+  * If `d >= 0` (overestimate — predicting more life than the engine actually has): `score = exp(d / 10) - 1`
+* The total score is the sum across all test engines.
+
+Because the exponential penalty grows faster for overestimation than underestimation, a **lower NASA score is better**, and the metric directly encodes the safety-critical asymmetry described in the Business Motivation section — it penalizes a model that's dangerously overconfident about remaining life much more than one that's conservatively cautious.
 
 ---
 
@@ -107,6 +140,10 @@ Model interpretability was investigated using:
 | XGBoost       | **21.23** | **28.65** | **0.724** |   **5734** |
 
 The tuned XGBoost model achieved the best performance across all evaluation metrics and was selected as the final deployment candidate.
+
+### Results Interpretation
+
+An MAE of ~21 cycles means predictions are, on average, within about 21 operating cycles of the true remaining life. For engines in FD004 with lifespans roughly in the 130–540 cycle range, this corresponds to being off by a few percent to (in the worst, short-lifespan cases) a more significant fraction of the engine's remaining life — which is why the NASA score, not MAE alone, is used to select the final model: it penalizes the dangerous direction of error (overestimating remaining life) more heavily, which matters more for maintenance scheduling than the raw average miss distance.
 
 ---
 
@@ -122,6 +159,33 @@ Hyperparameters:
 * subsample = 0.8
 * colsample_bytree = 1.0
 * min_child_weight = 5
+
+---
+
+## Limitations
+
+* Sensor values are not currently normalized per operating regime. Because FD004 mixes six distinct operating regimes, the same raw sensor reading can mean different things depending on the regime the engine is in at that cycle — per-regime normalization is a well-established improvement for FD002/FD004-style datasets and is a likely source of residual error, especially for long-horizon (high true-RUL) predictions where degradation signal is weakest.
+* Only two sensors (`sensor_11`, `sensor_14`) are used for rolling/lag/delta feature engineering; correlation analysis in the EDA step suggests other sensors (e.g. `sensor_20`) carry additional signal not yet incorporated.
+* The model is evaluated using only the final cycle of each test engine, matching the official NASA FD004 test protocol — real-time, mid-life RUL estimates for engines were not separately validated against ground truth at intermediate cycles.
+* Classical tree-based models are used rather than sequence models (LSTM/GRU/Transformer); these are called out under Future Work as a likely source of further improvement, since they can use the full sensor trajectory rather than a fixed set of lag features.
+
+---
+
+## Production Usage
+
+The saved model, KMeans regime clusterer, and expected feature order are packaged together so a new engine's sensor history can be scored without repeating the full training pipeline:
+
+```python
+import pandas as pd
+from predict import predict_engine_rul  # wraps the loading + feature engineering shown in the notebook
+
+# engine_df: a DataFrame of sensor readings for one engine, one row per cycle,
+# with the same raw columns as the training data (op_setting_1-3, sensor_1-21)
+predicted_rul = predict_engine_rul(engine_df)
+print(f"Predicted RUL: {predicted_rul:.2f} cycles")
+```
+
+`predict_engine_rul` loads `xgb_rul_model.pkl`, `regime_kmeans.pkl`, and `feature_order.pkl` from `models/`, assigns the engine's operating regime, recomputes the same rolling/lag/delta sensor features used in training, and returns the model's prediction for the engine's most recent cycle. Predicted RUL values are also bucketed into `Critical` (<15 cycles), `Warning` (<40 cycles), and `Healthy` risk levels to support maintenance triage.
 
 ---
 
@@ -153,6 +217,8 @@ remaining-useful-life-prediction/
 
 Potential improvements include:
 
+* Per-regime sensor normalization
+* Expanding rolling/lag/delta feature engineering beyond `sensor_11`/`sensor_14` to other correlated sensors
 * LSTM-based sequence models
 * GRU architectures
 * Transformer-based prognostics models
@@ -208,7 +274,7 @@ FD004 contains multiple operating regimes and fault modes. KMeans clustering was
 
 ![Feature Importance](figures/feature_importance.png)
 
-Tree-based feature importance revealed that temporal degradation indicators and operating regime information contributed most strongly to model predictions.
+Tree-based feature importance for the final deployed model highlights which temporal degradation indicators and operating-condition features contributed most strongly to predictions.
 
 ---
 
