@@ -236,6 +236,11 @@ The prediction error distribution allows inspection of model bias and provides i
 
 For safety-critical systems such as aviation engines, slight underestimation is often preferable to overestimation due to the significantly higher cost of unexpected failures.
 
+## Final Model Comparison
+
+![Model Comparison](figures/model_comparison.png)
+
+XGBoost achieved the best performance on the official NASA FD004 holdout dataset and was selected as the final deployment candidate.
 
 ## Technologies Used
 
