@@ -228,6 +228,25 @@ SHAP analysis provided local and global interpretability, allowing investigation
 
 ---
 
+## Predicted vs Actual Remaining Useful Life
+
+![Predicted vs Actual RUL](figures/predicted_vs_actual.png)
+
+The parity plot compares the model's predicted Remaining Useful Life against the true Remaining Useful Life values from the official NASA FD004 test set.
+
+Points lying on the diagonal represent perfect predictions, while deviations from the diagonal indicate prediction errors.
+
+Several important observations can be made from this visualization:
+
+* Predictions remain closely aligned with the ideal prediction line across most of the operating range.
+* Prediction variance increases for larger RUL values, which is expected because early-life degradation signals are weak and difficult to distinguish from normal operational variability.
+* The model demonstrates stronger accuracy in the low-RUL region, which is particularly valuable for maintenance planning since decisions become increasingly critical as failure approaches.
+* The absence of severe outliers suggests that the model generalizes reasonably well to previously unseen engines.
+
+This behavior is consistent with findings reported in the prognostics literature for the challenging FD004 subset, where multiple operating regimes and fault modes make long-horizon predictions substantially more difficult than near-failure estimation.
+
+---
+
 ## Prediction Error Distribution
 
 ![Prediction Error Distribution](figures/error_distribution.png)
@@ -235,6 +254,8 @@ SHAP analysis provided local and global interpretability, allowing investigation
 The prediction error distribution allows inspection of model bias and provides insight into whether the model tends to overestimate or underestimate remaining life.
 
 For safety-critical systems such as aviation engines, slight underestimation is often preferable to overestimation due to the significantly higher cost of unexpected failures.
+
+---
 
 ## Final Model Comparison
 
